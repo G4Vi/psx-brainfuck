@@ -132,7 +132,9 @@ bool interpret(const char *program, const char *input)
 }
 
 #define R_A0 (0x4)
+#define R_SP (0x1D)
 #define R_RA (0x1F)
+
 
 #define OPCODE(code) (code << 26)
 #define RS(REG) (REG << 21)
@@ -140,23 +142,30 @@ bool interpret(const char *program, const char *input)
 
 #define LUI(REG, IMM16) (OPCODE(0xF) | RS(0) | RT(REG) | IMM16)
 #define JAL(ADDRESS) (OPCODE(0x3) | ((ADDRESS>>2)& 0x03FFFFFF))
-#define ADDIU(SRC, DEST, IMM16) (OPCODE(0x9) | RS(SRC) | RT(DEST) | IMM16)
+#define ADDIU(SRC, DEST, IMM16) (OPCODE(0x9) | RS(SRC) | RT(DEST) | (IMM16 & 0xFFFF))
 #define JR(REG) (OPCODE(0x0) | RS(REG) | 0x8)
 #define NOP 0x0
+#define SW(SRC, DEST, OFFSET16) (OPCODE(0x2B) | RS(DEST) | RT(SRC) | OFFSET16)
+#define LW(SRC, DEST, OFFSET16) (OPCODE(0x23) | RS(SRC) | RT(DEST) | OFFSET16) 
 
 typedef void (*voidfunc)(void);
 bool compile(const char *program, const char *input)
 {
+	ramsyscall_printf("memaddr 0x%X\n", &MEMORY);
 	uint32_t printfaddr = (uint32_t)&ramsyscall_printf;
     const char *asmstring = "hello asm\n";
 	uint32_t asmstringaddr = (uint32_t)asmstring;
 
-	MEMORY[0] = LUI(R_A0, (asmstringaddr >> 16));
-	MEMORY[1] = JAL(printfaddr);
-	MEMORY[2] = ADDIU(R_A0, R_A0, (asmstringaddr & 0xFFFF));
-	MEMORY[3] = JR(R_RA);
-	MEMORY[4] = NOP;
-
+    MEMORY[0] = ADDIU(R_SP, R_SP, -0x18);
+	MEMORY[1] = SW(R_RA, R_SP, 0x14);
+	MEMORY[2] = LUI(R_A0, (asmstringaddr >> 16));
+	MEMORY[3] = JAL(printfaddr);
+	MEMORY[4] = ADDIU(R_A0, R_A0, (asmstringaddr & 0xFFFF));
+	MEMORY[5] = LW(R_SP, R_RA, 0x14);
+	MEMORY[6] = ADDIU(R_SP, R_SP, 0x18);	
+	MEMORY[7] = JR(R_RA);
+	MEMORY[8] = NOP;
+	syscall_flushCache();
 	voidfunc memcall = (voidfunc)&MEMORY;
 	memcall();
 }
