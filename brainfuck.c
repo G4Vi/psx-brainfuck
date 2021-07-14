@@ -151,12 +151,13 @@ bool interpret(const char *program, const char *input)
 typedef void (*voidfunc)(void);
 bool compile(const char *program, const char *input)
 {
+	memset(&MEMORY, 0, sizeof(MEMORY));
 	ramsyscall_printf("memaddr 0x%X\n", &MEMORY);
 	uint32_t printfaddr = (uint32_t)&ramsyscall_printf;
     const char *asmstring = "hello asm\n";
 	uint32_t asmstringaddr = (uint32_t)asmstring;
 
-    MEMORY[0] = ADDIU(R_SP, R_SP, -0x18);
+    /*MEMORY[0] = ADDIU(R_SP, R_SP, -0x18);
 	MEMORY[1] = SW(R_RA, R_SP, 0x14);
 	MEMORY[2] = LUI(R_A0, (asmstringaddr >> 16));
 	MEMORY[3] = JAL(printfaddr);
@@ -164,10 +165,72 @@ bool compile(const char *program, const char *input)
 	MEMORY[5] = LW(R_SP, R_RA, 0x14);
 	MEMORY[6] = ADDIU(R_SP, R_SP, 0x18);	
 	MEMORY[7] = JR(R_RA);
-	MEMORY[8] = NOP;
+	MEMORY[8] = NOP;*/
+
+    uint32_t *dins = &MEMORY[0];
+	// prologue
+	*dins = NOP;
+	*++dins = ADDIU(R_SP, R_SP, -0x18);
+	*++dins = SW(R_RA, R_SP, 0x14);
+	// todo save s0 through s7
+
+    // leave space to initialize s0 to after the program
+	*++dins = LUI(R_A0, (asmstringaddr >> 16));
+	*++dins = JAL(printfaddr);
+	*++dins = ADDIU(R_A0, R_A0, (asmstringaddr & 0xFFFF));
+
+	int braceind = 0;
+	uint32_t braces[100];
+	const char *sins = program;
+
+    
+
+	// s0 stack ptr	
+
+	if(0)
+	//while(*sins != '\0')
+	{
+		switch(*sins)
+		{
+			case '>':
+            // inc s0
+			break;
+			case '<':
+            // dec s0
+			break;
+			case '+':
+			// inc value at s0
+			break;
+			case '-':
+			// dec value at s0
+			break;
+			case '.':
+			// mov string to a0
+	        // mov s0 to a1
+			// call printf
+			break;
+			case ',':
+			// copy from buffer
+			// inc buffer ptr
+			break;
+			case '[':
+            // conditional jump
+			break;
+			case ']':
+			// conditional jump
+			break;
+		}	
+
+		++sins;
+	}
+	// epilogue
+	// todo restore s0 through s7
+	*++dins = LW(R_SP, R_RA, 0x14);
+	*++dins = ADDIU(R_SP, R_SP, 0x18);	
+	*++dins = JR(R_RA);
+	*++dins = NOP;
 	syscall_flushCache();
-	voidfunc memcall = (voidfunc)&MEMORY;
-	memcall();
+    return (braceind == 0);		
 }
 
 void interpret_program(const char *program, const char *input)
@@ -190,7 +253,9 @@ int main(void) {
 	interpret_program(HELLOWORLD, NULL);
     interpret_program(SQUARES, NULL);
 	interpret_program(HEAD, HEADINPUT);
-	compile(NULL, NULL);		
+	compile(NULL, NULL);
+	voidfunc memcall = (voidfunc)&MEMORY;
+	memcall();		
 	ramsyscall_printf("compiled ran\n");
 	while(1);
 }
