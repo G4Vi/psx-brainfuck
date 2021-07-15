@@ -131,7 +131,10 @@ bool interpret(const char *program, const char *input)
 	return true;
 }
 
-#define R_A0 (0x4)
+#define R_A0 (0x04)
+#define R_A1 (0x05)
+#define R_T0 (0x08)
+#define R_S0 (0x10)
 #define R_SP (0x1D)
 #define R_RA (0x1F)
 
@@ -140,9 +143,9 @@ bool interpret(const char *program, const char *input)
 #define RS(REG) (REG << 21)
 #define RT(REG) (REG << 16)
 
-#define LUI(REG, IMM16) (OPCODE(0xF) | RS(0) | RT(REG) | IMM16)
-#define JAL(ADDRESS) (OPCODE(0x3) | ((ADDRESS>>2)& 0x03FFFFFF))
-#define ADDIU(SRC, DEST, IMM16) (OPCODE(0x9) | RS(SRC) | RT(DEST) | (IMM16 & 0xFFFF))
+#define LUI(REG, IMM16) (OPCODE(0xF) | RS(0) | RT((REG)) | (IMM16))
+#define JAL(ADDRESS) (OPCODE(0x3) | (((ADDRESS)>>2)& 0x03FFFFFF))
+#define ADDIU(SRC, DEST, IMM16) (OPCODE(0x9) | RS((SRC)) | RT((DEST)) | ((IMM16) & 0xFFFF))
 #define JR(REG) (OPCODE(0x0) | RS(REG) | 0x8)
 #define NOP 0x0
 #define SW(SRC, DEST, OFFSET16) (OPCODE(0x2B) | RS(DEST) | RT(SRC) | OFFSET16)
@@ -167,47 +170,61 @@ bool compile(const char *program, const char *input)
 	MEMORY[7] = JR(R_RA);
 	MEMORY[8] = NOP;*/
 
+    
     uint32_t *dins = &MEMORY[0];
 	// prologue
 	*dins = NOP;
 	*++dins = ADDIU(R_SP, R_SP, -0x18);
 	*++dins = SW(R_RA, R_SP, 0x14);
-	// todo save s0 through s7
-
-    // leave space to initialize s0 to after the program
+	*++dins = SW(R_S0, R_SP, 0x10);
+	// leave space to initialize s0 to after the program
+    uint32_t *inits0hi = ++dins;
+	uint32_t *inits0lo = ++dins;    
 	*++dins = LUI(R_A0, (asmstringaddr >> 16));
 	*++dins = JAL(printfaddr);
 	*++dins = ADDIU(R_A0, R_A0, (asmstringaddr & 0xFFFF));
 
 	int braceind = 0;
 	uint32_t braces[100];
-	const char *sins = program;
+	//const char *sins = program;
+	const char *sins = "+><>>>++++++++++++++++++++++++++++++++++++++++++++++++++.";
 
     
 
-	// s0 stack ptr	
+	// s0 stack ptr
+	const char *fmt = "%c";	
 
-	if(0)
-	//while(*sins != '\0')
+	//if(0)
+	while(*sins != '\0')
 	{
 		switch(*sins)
 		{
 			case '>':
             // inc s0
+			*++dins = ADDIU(R_S0, R_S0, 0x4);
 			break;
 			case '<':
-            // dec s0
+			// dec s0
+			*++dins = ADDIU(R_S0, R_S0, -0x4);            
 			break;
 			case '+':
-			// inc value at s0
+			// load value at s0. increment, and, store
+			*++dins = LW(R_S0, R_T0,0x0);
+			*++dins = ADDIU(R_T0, R_T0, 0x1);
+			*++dins = SW(R_T0, R_S0, 0x0);
 			break;
 			case '-':
-			// dec value at s0
+			// load value at s0. decrement, and, store
+			*++dins = LW(R_S0, R_T0,0x0);
+			*++dins = ADDIU(R_T0, R_T0, -0x1);
+			*++dins = SW(R_T0, R_S0, 0x0);
 			break;
 			case '.':
-			// mov string to a0
-	        // mov s0 to a1
-			// call printf
+			// load value at s0. load fmt string and call printf
+			*++dins = LW(R_S0, R_A1, 0x0);
+			*++dins = LUI(R_A0, ((uint32_t)fmt) >> 16);
+			*++dins = JAL(printfaddr);
+			*++dins = ADDIU(R_A0, R_A0, ((uint32_t)fmt)&0xFFFF);
 			break;
 			case ',':
 			// copy from buffer
@@ -224,11 +241,17 @@ bool compile(const char *program, const char *input)
 		++sins;
 	}
 	// epilogue
-	// todo restore s0 through s7
+	// todo restore s register usage
+	*++dins = LW(R_SP, R_S0, 0x10);
 	*++dins = LW(R_SP, R_RA, 0x14);
 	*++dins = ADDIU(R_SP, R_SP, 0x18);	
 	*++dins = JR(R_RA);
 	*++dins = NOP;
+
+	// intialize the start ptr to just after the instructions
+	uint32_t startptr =  (uint32_t)++dins;
+	*inits0hi = LUI(R_S0, startptr >> 16);
+    *inits0lo = ADDIU(R_S0, R_S0, startptr & 0xFFFF);
 	syscall_flushCache();
     return (braceind == 0);		
 }
