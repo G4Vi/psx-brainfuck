@@ -131,6 +131,7 @@ bool interpret(const char *program, const char *input)
 	return true;
 }
 
+#define R_00 (0x00)
 #define R_A0 (0x04)
 #define R_A1 (0x05)
 #define R_T0 (0x08)
@@ -149,7 +150,9 @@ bool interpret(const char *program, const char *input)
 #define JR(REG) (OPCODE(0x0) | RS(REG) | 0x8)
 #define NOP 0x0
 #define SW(SRC, DEST, OFFSET16) (OPCODE(0x2B) | RS(DEST) | RT(SRC) | OFFSET16)
-#define LW(SRC, DEST, OFFSET16) (OPCODE(0x23) | RS(SRC) | RT(DEST) | OFFSET16) 
+#define LW(SRC, DEST, OFFSET16) (OPCODE(0x23) | RS(SRC) | RT(DEST) | OFFSET16)
+#define BEQ(FIRST, SECOND, LINES16) (OPCODE(0x04) | RS((FIRST)) | RT((SECOND)) | ((LINES16)&0xFFFF))
+#define BNE(FIRST, SECOND, LINES16) (OPCODE(0x05) | RS((FIRST)) | RT((SECOND)) | ((LINES16)&0xFFFF))
 
 typedef void (*voidfunc)(void);
 bool compile(const char *program, const char *input)
@@ -177,17 +180,18 @@ bool compile(const char *program, const char *input)
 	*++dins = ADDIU(R_SP, R_SP, -0x18);
 	*++dins = SW(R_RA, R_SP, 0x14);
 	*++dins = SW(R_S0, R_SP, 0x10);
-	// leave space to initialize s0 to after the program
+	// leave space to initialize s0 to memory after the program
     uint32_t *inits0hi = ++dins;
 	uint32_t *inits0lo = ++dins;    
-	*++dins = LUI(R_A0, (asmstringaddr >> 16));
-	*++dins = JAL(printfaddr);
-	*++dins = ADDIU(R_A0, R_A0, (asmstringaddr & 0xFFFF));
-
-	int braceind = 0;
-	uint32_t braces[100];
+	
+    const int MAX_BRACES = 100;
+	int bracecnt = 0;
+	uint32_t braces[MAX_BRACES];
+	int lines;
 	//const char *sins = program;
-	const char *sins = "+><>>>++++++++++++++++++++++++++++++++++++++++++++++++++.";
+	//const char *sins = "+[-]";
+	//const char *sins = HELLOWORLD;
+	const char *sins = SQUARES;
 
     
 
@@ -230,11 +234,28 @@ bool compile(const char *program, const char *input)
 			// copy from buffer
 			// inc buffer ptr
 			break;
-			case '[':
-            // conditional jump
+			case '[':            
+			if(bracecnt >= 100)
+			{
+				return false;
+			}
+			// load value at s0 BEQZ
+			*++dins = LW(R_S0, R_T0, 0x0);			
+			// save where we need a BEQ
+			braces[bracecnt++] = (uint32_t)(++dins);
+			*++dins = NOP; // branch delay slot
 			break;
 			case ']':
-			// conditional jump
+			if(bracecnt == 0)
+			{
+				return false;
+			}
+			// load value at s0 BEQZ
+			*++dins = LW(R_S0, R_T0, 0x0);
+			lines = (((uint32_t)(++dins)) -  braces[bracecnt-1])/ 4;			
+			*(uint32_t*)braces[--bracecnt] = BEQ(R_T0, R_00, lines);
+			*dins = BNE(R_T0, R_00, -lines);
+			*++dins = NOP; // branch delay slot
 			break;
 		}	
 
@@ -253,7 +274,7 @@ bool compile(const char *program, const char *input)
 	*inits0hi = LUI(R_S0, startptr >> 16);
     *inits0lo = ADDIU(R_S0, R_S0, startptr & 0xFFFF);
 	syscall_flushCache();
-    return (braceind == 0);		
+    return (bracecnt == 0);		
 }
 
 void interpret_program(const char *program, const char *input)
