@@ -132,9 +132,11 @@ bool interpret(const char *program, const char *input)
 }
 
 #define R_00 (0x00)
+#define R_V0 (0x02)
 #define R_A0 (0x04)
 #define R_A1 (0x05)
 #define R_T0 (0x08)
+#define R_T1 (0x09)
 #define R_S0 (0x10)
 #define R_SP (0x1D)
 #define R_RA (0x1F)
@@ -154,9 +156,66 @@ bool interpret(const char *program, const char *input)
 #define BEQ(FIRST, SECOND, LINES16) (OPCODE(0x04) | RS((FIRST)) | RT((SECOND)) | ((LINES16)&0xFFFF))
 #define BNE(FIRST, SECOND, LINES16) (OPCODE(0x05) | RS((FIRST)) | RT((SECOND)) | ((LINES16)&0xFFFF))
 
+// not sure if right
+#define JALR(REG) ( OPCODE(0x00) | RS((REG)) | RT(0x00) | 0xF809)
+
+
+
+uint32_t *o_encode_adjust_ptr(uint32_t *before, const char ** pProgram)
+{
+	int adjust = 0;
+	while(1)
+	{
+		if(**pProgram == '>')
+		{
+			adjust += 0x4;
+		}
+		else if(**pProgram == '<')
+		{
+			adjust -= 0x4;
+		}
+		else if((**pProgram == '+') || (**pProgram == '-') || (**pProgram == '[') || (**pProgram == ']') || (**pProgram == '.') || (**pProgram == ',') || (**pProgram == '\0'))
+		{
+			if(adjust == 0) return before;
+			break;
+		}
+		++*pProgram;
+	}
+	*++before = ADDIU(R_S0, R_S0, adjust);
+	return before;
+}
+
+uint32_t *o_encode_inc_dec(uint32_t *before, const char ** pProgram)
+{
+	int adjust = 0;
+	while(1)
+	{
+		if(**pProgram == '+')
+		{
+			++adjust;
+		}
+		else if(**pProgram == '-')
+		{
+			--adjust;
+		}
+		else if((**pProgram == '>') || (**pProgram == '<') || (**pProgram == '[') || (**pProgram == ']') || (**pProgram == '.') || (**pProgram == ',') || (**pProgram == '\0'))
+		{
+			if(adjust == 0) return before;
+			break;
+		}
+		++*pProgram;
+	}
+	*++before = LW(R_S0, R_T0,0x0);
+	*++before = NOP;
+	*++before = ADDIU(R_T0, R_T0, adjust);
+	*++before = SW(R_T0, R_S0, 0x0);
+	return before;
+}
+
 typedef void (*voidfunc)(void);
 bool compile(const char *program, const char *input)
 {
+	syscall_putchar('Q');
 	memset(&MEMORY, 0, sizeof(MEMORY));
 	ramsyscall_printf("memaddr 0x%X\n", &MEMORY);
 	uint32_t printfaddr = (uint32_t)&ramsyscall_printf;
@@ -192,11 +251,13 @@ bool compile(const char *program, const char *input)
 	//const char *sins = "+[-]";
 	//const char *sins = HELLOWORLD;
 	const char *sins = SQUARES;
-
+    //const char *sins = "[]";
     
 
 	// s0 stack ptr
-	const char *fmt = "%c";	
+	const char *fmt = "%c";
+
+	bool optimize = true;	
 
 	//if(0)
 	while(*sins != '\0')
@@ -204,31 +265,74 @@ bool compile(const char *program, const char *input)
 		switch(*sins)
 		{
 			case '>':
-            // inc s0
-			*++dins = ADDIU(R_S0, R_S0, 0x4);
+			if(!optimize)
+			{
+				// inc s0
+			    *++dins = ADDIU(R_S0, R_S0, 0x4);
+			}
+			else
+			{
+				
+				dins = o_encode_adjust_ptr(dins, &sins);
+				continue;
+			}
 			break;
 			case '<':
-			// dec s0
-			*++dins = ADDIU(R_S0, R_S0, -0x4);            
+			if(!optimize)
+			{
+				// dec s0
+			    *++dins = ADDIU(R_S0, R_S0, -0x4);  
+			}
+			else
+			{
+				dins = o_encode_adjust_ptr(dins, &sins);
+				continue;
+			}
+			          
 			break;
 			case '+':
-			// load value at s0. increment, and, store
-			*++dins = LW(R_S0, R_T0,0x0);
-			*++dins = ADDIU(R_T0, R_T0, 0x1);
-			*++dins = SW(R_T0, R_S0, 0x0);
+			if(!optimize)
+			{
+				// load value at s0. increment, and, store
+			    *++dins = LW(R_S0, R_T0,0x0);
+			    *++dins = NOP;
+			    *++dins = ADDIU(R_T0, R_T0, 0x1);
+			    *++dins = SW(R_T0, R_S0, 0x0);
+			}
+			else
+			{
+				dins = o_encode_inc_dec(dins, &sins);
+				continue;
+			}
+			
 			break;
 			case '-':
-			// load value at s0. decrement, and, store
-			*++dins = LW(R_S0, R_T0,0x0);
-			*++dins = ADDIU(R_T0, R_T0, -0x1);
-			*++dins = SW(R_T0, R_S0, 0x0);
+			if(!optimize)
+			{
+				// load value at s0. decrement, and, store
+			    *++dins = LW(R_S0, R_T0,0x0);
+			    *++dins = NOP;
+			    *++dins = ADDIU(R_T0, R_T0, -0x1);
+			    *++dins = SW(R_T0, R_S0, 0x0);
+			}
+			else
+			{
+				dins = o_encode_inc_dec(dins, &sins);
+				continue;
+			}
+			
 			break;
 			case '.':
-			// load value at s0. load fmt string and call printf
-			*++dins = LW(R_S0, R_A1, 0x0);
+			// printf
+			/**++dins = LW(R_S0, R_A1, 0x0);
 			*++dins = LUI(R_A0, ((uint32_t)fmt) >> 16);
 			*++dins = JAL(printfaddr);
-			*++dins = ADDIU(R_A0, R_A0, ((uint32_t)fmt)&0xFFFF);
+			*++dins = ADDIU(R_A0, R_A0, ((uint32_t)fmt)&0xFFFF);*/
+		    // syscall_putchar            
+			*++dins = LW(R_S0, R_A0, 0x0);
+			*++dins = ADDIU(R_00, R_V0, 0xB0);
+			*++dins = JALR(R_V0);
+			*++dins = ADDIU(R_00, R_T1, 0x3D);
 			break;
 			case ',':
 			// copy from buffer
@@ -239,8 +343,14 @@ bool compile(const char *program, const char *input)
 			{
 				return false;
 			}
-			// load value at s0 BEQZ
-			*++dins = LW(R_S0, R_T0, 0x0);			
+			// only load value if necessary
+			if(!optimize || (*dins != SW(R_T0, R_S0, 0x0)))
+			{
+				// load value at s0
+			    *++dins = LW(R_S0, R_T0, 0x0);
+			    *++dins = NOP;	
+			}
+					
 			// save where we need a BEQ
 			braces[bracecnt++] = (uint32_t)(++dins);
 			*++dins = NOP; // branch delay slot
@@ -252,8 +362,9 @@ bool compile(const char *program, const char *input)
 			}
 			// load value at s0 BEQZ
 			*++dins = LW(R_S0, R_T0, 0x0);
+			*++dins = NOP;
 			lines = (((uint32_t)(++dins)) -  braces[bracecnt-1])/ 4;			
-			*(uint32_t*)braces[--bracecnt] = BEQ(R_T0, R_00, lines);
+			*(uint32_t*)braces[--bracecnt] = BEQ(R_T0, R_00, lines+1);
 			*dins = BNE(R_T0, R_00, -lines);
 			*++dins = NOP; // branch delay slot
 			break;
@@ -268,6 +379,9 @@ bool compile(const char *program, const char *input)
 	*++dins = ADDIU(R_SP, R_SP, 0x18);	
 	*++dins = JR(R_RA);
 	*++dins = NOP;
+	ramsyscall_printf("inst end 0x%X\n", ++dins);
+	const uint32_t delta = (uint32_t)dins-(uint32_t)&MEMORY;
+	ramsyscall_printf("ins len %u\n", delta);
 
 	// intialize the start ptr to just after the instructions
 	uint32_t startptr =  (uint32_t)++dins;
