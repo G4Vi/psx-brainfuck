@@ -415,5 +415,22 @@ int main(void) {
 	voidfunc memcall = (voidfunc)&MEMORY;
 	memcall();		
 	ramsyscall_printf("compiled ran\n");
-	while(1);
+	while(1)
+	{
+		uint8_t data[4];
+		int readresult = syscall_read(0, data, 4);
+		if(readresult == -1)
+		{
+			ramsyscall_printf("read error\n");
+		}
+		else if(readresult == 0)
+		{
+			//ramsyscall_printf("empty\n");
+		}
+		else
+		{
+			ramsyscall_printf("did read: %c %c %c %c\n", data[0], data[1], data[2], data[3]);
+		}
+		
+	}
 }
