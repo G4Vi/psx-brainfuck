@@ -415,6 +415,13 @@ int main(void) {
 	voidfunc memcall = (voidfunc)&MEMORY;
 	memcall();		
 	ramsyscall_printf("compiled ran\n");
+    
+	syscall_close(0);
+	syscall_close(1);
+	syscall_open("tty00:", 0);
+	syscall_open("tty00:", 1);
+    ramsyscall_printf("reopen worked\n");
+
 	while(1)
 	{
 		uint8_t data[4];
@@ -425,7 +432,7 @@ int main(void) {
 		}
 		else if(readresult == 0)
 		{
-			//ramsyscall_printf("empty\n");
+			ramsyscall_printf("empty\n");
 		}
 		else
 		{
