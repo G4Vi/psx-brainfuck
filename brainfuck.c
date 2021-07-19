@@ -215,7 +215,6 @@ uint32_t *o_encode_inc_dec(uint32_t *before, const char ** pProgram)
 typedef void (*voidfunc)(void);
 bool compile(const char *program, const char *input)
 {
-	syscall_putchar('Q');
 	memset(&MEMORY, 0, sizeof(MEMORY));
 	ramsyscall_printf("memaddr 0x%X\n", &MEMORY);
 	uint32_t printfaddr = (uint32_t)&ramsyscall_printf;
@@ -405,6 +404,134 @@ void interpret_program(const char *program, const char *input)
 	}
 }
 
+// Thanks Shendo http://www.psxdev.net/forum/viewtopic.php?t=384
+
+/*Bitrate reload factor*/
+#define SIO_REL_STOP	0
+#define SIO_REL_MUL1	1
+#define SIO_REL_MUL16	2
+#define SIO_REL_MUL64	3
+
+/*Bit lenght*/
+#define SIO_DATA_LEN_5	0
+#define SIO_DATA_LEN_6	1
+#define SIO_DATA_LEN_7	2
+#define SIO_DATA_LEN_8	3
+
+/*Stop bit*/
+#define SIO_STOP_BIT_1	1
+#define SIO_STOP_BIT_15	2	/*1.5*/
+#define SIO_STOP_BIT_2	3
+
+/*Parity*/
+#define SIO_PARITY_NONE	0
+#define SIO_PARITY_ODD	1	/*ODD/EVEN are set to vice-versa according to Martin's docs*/
+#define SIO_PARITY_EVEN	3
+
+/*Pointers to SIO registers*/
+volatile static unsigned char *SIO_TX_RX = (unsigned char*)0x1F801050;	/*Read/Write*/
+volatile static unsigned short *SIO_STAT = (unsigned short*)0x1F801054;	/*Read only*/
+volatile static unsigned short *SIO_MODE = (unsigned short*)0x1F801058;	/*Read/Write*/
+volatile static unsigned short *SIO_CTRL = (unsigned short*)0x1F80105A;	/*Read/Write*/
+volatile static unsigned short *SIO_BPSV = (unsigned short*)0x1F80105E;	/*Read/Write*/
+
+/*
+ * Initialize SIO communication at the specified bitrate.
+ * Mode is 8N1.
+ */
+void StartSIO(int bitrate);
+
+/*
+ * Same as StartSIO but with more control.
+ * IMPORTANT: Must use defined macros.
+ * For example setting datalenght to 5 should be done with "SIO_DATA_LEN_5"
+ * and not simply passing 5 as an argument.
+ */
+void StartSIOEx(int bitrate, int datalenght, int parity, int stopbit);
+
+/*
+ * Shuts down SIO communication.
+ */
+void StopSIO();
+
+/*
+ * Read a single byte from the input buffer.
+ * Direct access to register, doesn't use BIOS routines.
+ */
+unsigned char ReadByteSIO();
+
+/*
+ * Send a single byte to the output buffer.
+ * Direct access to register, doesn't use BIOS routines.
+ */
+void SendByteSIO(unsigned char data);
+
+/*
+ * Check if any data is waiting in the input buffer.
+ * Must be used when fetching data otherwise incorrect data could be read (usually 0x00).
+ * 0 - No, 1 - Yes
+ */
+int CheckSIOInBuffer();
+
+/*
+ * Check if register is ready to send data (previos operation finished).
+ * Must be used when sending data as output buffer is only 2 bytes long.
+ * 0 - No, 1 - Yes.
+ */
+int CheckSIOOutBuffer();
+
+void StartSIO(int bitrate)
+{
+	/*Set to 8N1 mode with desired bitrate*/
+	StartSIOEx(bitrate, SIO_DATA_LEN_8, SIO_PARITY_NONE, SIO_STOP_BIT_1);
+}
+
+void StartSIOEx(int bitrate, int datalenght, int parity, int stopbit)
+{
+	/*Set SIO_MODE register, bitrate reload factor set to MUL16 by default*/
+	*SIO_MODE = SIO_REL_MUL16 | (datalenght << 2) | (parity << 4) | (stopbit << 6);
+
+	/*Reset SIO_CTRL register.*/
+	*SIO_CTRL = 0;
+
+	/*Set TX and RT to enabled, no handshaking signals.*/
+	*SIO_CTRL = 1 | (1 << 2);
+
+	/*Calculate bitrate reload value based on the given bitrate
+	 * Reload = SystemClock (33 Mhz) / (Factor (MULI16) * bitrate)*/
+	*SIO_BPSV = 0x204CC00 / (16 * bitrate);
+}
+
+void StopSIO()
+{
+	/*Set all SIO related registers to zero*/
+	*SIO_MODE = 0;
+	*SIO_CTRL = 0;
+	*SIO_BPSV = 0;
+}
+
+unsigned char ReadByteSIO()
+{
+	return *(unsigned char*)SIO_TX_RX;
+}
+
+void SendByteSIO(unsigned char data)
+{
+	*SIO_TX_RX = data;
+}
+
+int CheckSIOInBuffer()
+{
+	/*Return status of RX FIFO*/
+	return (*SIO_STAT & 0x2)>>1;
+}
+
+int CheckSIOOutBuffer()
+{
+	/*Return status of TX Ready flag*/
+	return (*SIO_STAT & 0x4)>>1;
+}
+
 
 int main(void) {
 	ramsyscall_printf("psx-brainfuck\n");
@@ -414,30 +541,23 @@ int main(void) {
 	compile(NULL, NULL);
 	voidfunc memcall = (voidfunc)&MEMORY;
 	memcall();		
-	ramsyscall_printf("compiled ran\n");
-    
-	syscall_close(0);
-	syscall_close(1);
-	syscall_open("tty00:", 0);
-	syscall_open("tty00:", 1);
-    ramsyscall_printf("reopen worked\n");
-
+	ramsyscall_printf("compiled ran\n");    
+   
+    char buf[] = "Got char X\r\n";
 	while(1)
 	{
-		uint8_t data[4];
-		int readresult = syscall_read(0, data, 4);
-		if(readresult == -1)
+		if(CheckSIOInBuffer())
 		{
-			ramsyscall_printf("read error\n");
-		}
-		else if(readresult == 0)
-		{
-			ramsyscall_printf("empty\n");
-		}
-		else
-		{
-			ramsyscall_printf("did read: %c %c %c %c\n", data[0], data[1], data[2], data[3]);
-		}
-		
-	}
+			char c = ReadByteSIO();
+			//ramsyscall_printf("RECV char %c\n", c);
+			buf[sizeof(buf)-4] = c;
+			for(char *str = buf; *str != '\0'; ++str)
+			{
+				while(!CheckSIOOutBuffer());
+				SendByteSIO(*str);
+			}
+		}	
+	}    
+
+	while(1);
 }
