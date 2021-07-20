@@ -539,6 +539,89 @@ static __attribute__((always_inline)) int syscall_removeDevice(const char *devic
     return ((int (*)(const char *))0xb0)(device_name);
 }
 
+#include "common/psxlibc/device.h"
+
+int KTTYAction(struct File * file, enum FileAction inMode)
+{
+    
+    if( inMode != PSXWRITE )
+	{
+		return -1;
+	}
+        
+    
+    uint32_t transferLeft = file->count;
+    uint8_t *readAddr = file->buffer;
+	while(transferLeft > 0)
+	{
+		uint32_t bailout = 0;
+        
+        // SR_TXU | SR_TXRDY
+        while( (*SIO_STAT & 0x05) == 0 ){
+            if ( bailout++ > 8000 )
+                break;
+        }
+
+        *SIO_TX_RX = *readAddr;
+		--transferLeft;
+		++readAddr;
+	}
+	return file->count;
+}
+
+void KTTYNull(){
+    
+}
+
+int KTTYReturn0(){
+    return 0;    
+}
+
+int KTTYReadWrite(struct File * file, void *buffer, int size)
+{
+	return 0;
+}
+
+struct DirEntry *KTTYfirstFile(struct File *file, const char *filename, struct DirEntry *entry)
+{
+	return NULL;
+}
+struct DirEntry *KTTYnextFile(struct File *file, struct DirEntry *entry)
+{
+	return NULL;
+}
+
+int KTTYformat(struct File *file)
+{
+	return 0;
+}
+
+const char devname[] = "tty";
+const char devdesc[] = "SIO TTY";
+
+static struct Device newtty  = {
+	.name = (const char*)&devname,
+	.flags = (PSXDTTYPE_CHAR | PSXDTTYPE_CONS),
+	.blockSize = 0,
+	.desc = (const char*)&devdesc,
+	.init = &KTTYNull,
+	.open = &KTTYReturn0,
+	.action = &KTTYAction,
+	.close = &KTTYReturn0,
+	.ioctl = &KTTYReturn0,   
+    .read  = &KTTYReadWrite,      
+    .write = &KTTYReadWrite,      
+    .erase = &KTTYNull,      
+    .undelete = &KTTYNull,   
+    .firstFile = &KTTYfirstFile,  
+    .nextFile = &KTTYnextFile,   
+    .format = &KTTYformat,     
+    .chdir = &KTTYNull,      
+    .rename = &KTTYNull,     
+    .deinit = &KTTYNull,     
+    .check = &KTTYNull
+};
+
 int main(void) {
 	ramsyscall_printf("psx-brainfuck\n");
 	interpret_program(HELLOWORLD, NULL);
@@ -565,13 +648,21 @@ int main(void) {
 		}	
 	}*/
 
-	enterCriticalSection();
-	syscall_close(0);
+    // close STDIN and STDOUT
+    syscall_close(0);
 	syscall_close(1);
-	const char *devname = "tty";
-	syscall_removeDevice(devname);
 
+	// replace the TTY
+	enterCriticalSection();		
+	syscall_removeDevice(devname);
+    syscall_addDevice(&newtty);    
 	leaveCriticalSection();
+
+    // reopen STDIN and STDOUT
+	syscall_open(devname, PSXREAD);
+	syscall_open(devname, PSXWRITE);
+
+	ramsyscall_printf("tty installed\n");   
 	
 	while(1);
 }
