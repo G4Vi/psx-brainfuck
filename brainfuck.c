@@ -533,6 +533,12 @@ int CheckSIOOutBuffer()
 }
 
 
+static __attribute__((always_inline)) int syscall_removeDevice(const char *device_name) {
+    register int n asm("t1") = 0x48;
+    __asm__ volatile("" : "=r"(n) : "r"(n));
+    return ((int (*)(const char *))0xb0)(device_name);
+}
+
 int main(void) {
 	ramsyscall_printf("psx-brainfuck\n");
 	interpret_program(HELLOWORLD, NULL);
@@ -543,7 +549,7 @@ int main(void) {
 	memcall();		
 	ramsyscall_printf("compiled ran\n");    
    
-    char buf[] = "Got char X\r\n";
+    /*char buf[] = "Got char X\r\n";
 	while(1)
 	{
 		if(CheckSIOInBuffer())
@@ -557,7 +563,15 @@ int main(void) {
 				SendByteSIO(*str);
 			}
 		}	
-	}    
+	}*/
 
+	enterCriticalSection();
+	syscall_close(0);
+	syscall_close(1);
+	const char *devname = "tty";
+	syscall_removeDevice(devname);
+
+	leaveCriticalSection();
+	
 	while(1);
 }
