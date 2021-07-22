@@ -1,0 +1,9 @@
+openbios:
+0x5974 array of device structs (80 bytes big)
+
+x/s *(0x5974 + 12)
+
+device is skipped with *device_name == '\0'
+
+bios 0x502224B6:
+0x6ee0 array of device structs (80 bytes big)

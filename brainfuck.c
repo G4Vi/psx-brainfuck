@@ -533,6 +533,12 @@ int CheckSIOOutBuffer()
 }
 
 
+static __attribute__((always_inline)) int syscall_write(int fd, const void *buffer, int size) {
+    register int n asm("t1") = 0x35;
+    __asm__ volatile("" : "=r"(n) : "r"(n));
+    return ((int (*)(int, const void *, int))0xb0)(fd, buffer, size);
+}
+
 static __attribute__((always_inline)) int syscall_removeDevice(const char *device_name) {
     register int n asm("t1") = 0x48;
     __asm__ volatile("" : "=r"(n) : "r"(n));
@@ -540,12 +546,6 @@ static __attribute__((always_inline)) int syscall_removeDevice(const char *devic
 }
 
 // lowercase
-void RemoveDevice( char * deviceName ){
-	register int cmd __asm__("$9") = 0x48;
-	__asm__ volatile("" : "=r"(cmd) : "r"(cmd));
-	return ((void(*)(char*))0xB0)(deviceName);
-}
-
 void PrintDevices(){
 	register int cmd __asm__("$9") = 0x49;
 	__asm__ volatile("" : "=r"(cmd) : "r"(cmd));
@@ -673,7 +673,9 @@ int main(void) {
 
     
     PrintDevices();
-	syscall_putchar('\n');
+	ramsyscall_printf("newtty strings 0x%X 0x%x\n", newtty.name, newtty.desc);
+
+
 	// replace the TTY
 	enterCriticalSection();	
 
@@ -681,13 +683,14 @@ int main(void) {
     syscall_close(0);
 	syscall_close(1);
 
-	RemoveDevice(devname);//syscall_removeDevice(devname);
+	syscall_removeDevice(devname);
     leaveCriticalSection();  
 
 	PrintDevices();
-	syscall_putchar('\n'); 
+	syscall_putchar('\n');
 
-   enterCriticalSection();	
+    enterCriticalSection();
+    ramsyscall_printf("newtty addr 0x%X\n", &newtty);
     int ad = syscall_addDevice(&newtty);
 
 	// reopen STDIN and STDOUT
@@ -698,6 +701,8 @@ int main(void) {
 
 	PrintDevices();
 	syscall_putchar('\n');
+
+	syscall_write(1, "bye\n", 4);
     ramsyscall_printf("tty installed\n");
 	while(1);  
 
