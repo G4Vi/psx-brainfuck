@@ -539,6 +539,20 @@ static __attribute__((always_inline)) int syscall_removeDevice(const char *devic
     return ((int (*)(const char *))0xb0)(device_name);
 }
 
+// lowercase
+void RemoveDevice( char * deviceName ){
+	register int cmd __asm__("$9") = 0x48;
+	__asm__ volatile("" : "=r"(cmd) : "r"(cmd));
+	return ((void(*)(char*))0xB0)(deviceName);
+}
+
+void PrintDevices(){
+	register int cmd __asm__("$9") = 0x49;
+	__asm__ volatile("" : "=r"(cmd) : "r"(cmd));
+	return ((void(*)(void))0xB0)();
+}
+
+
 #include "common/psxlibc/device.h"
 
 int KTTYAction(struct File * file, enum FileAction inMode)
@@ -552,6 +566,7 @@ int KTTYAction(struct File * file, enum FileAction inMode)
     
     uint32_t transferLeft = file->count;
     uint8_t *readAddr = file->buffer;
+	bool printA = false;
 	while(transferLeft > 0)
 	{
 		uint32_t bailout = 0;
@@ -562,7 +577,15 @@ int KTTYAction(struct File * file, enum FileAction inMode)
                 break;
         }
 
-        *SIO_TX_RX = *readAddr;
+        if(!printA)
+		{
+			*SIO_TX_RX = *readAddr;
+		}
+		else
+		{
+			*SIO_TX_RX ='A';
+		}
+		printA = !printA;
 		--transferLeft;
 		++readAddr;
 	}
@@ -597,7 +620,7 @@ int KTTYformat(struct File *file)
 }
 
 const char devname[] = "tty";
-const char devdesc[] = "SIO TTY";
+const char devdesc[] = "SIO_TTY";
 
 static struct Device newtty  = {
 	.name = (const char*)&devname,
@@ -648,21 +671,41 @@ int main(void) {
 		}	
 	}*/
 
-    // close STDIN and STDOUT
+    
+    PrintDevices();
+	syscall_putchar('\n');
+	// replace the TTY
+	enterCriticalSection();	
+
+	// close STDIN and STDOUT
     syscall_close(0);
 	syscall_close(1);
 
-	// replace the TTY
-	enterCriticalSection();		
-	syscall_removeDevice(devname);
-    syscall_addDevice(&newtty);    
-	leaveCriticalSection();
+	RemoveDevice(devname);//syscall_removeDevice(devname);
+    leaveCriticalSection();  
 
-    // reopen STDIN and STDOUT
+	PrintDevices();
+	syscall_putchar('\n'); 
+
+   enterCriticalSection();	
+    int ad = syscall_addDevice(&newtty);
+
+	// reopen STDIN and STDOUT
 	syscall_open(devname, PSXREAD);
 	syscall_open(devname, PSXWRITE);
 
-	ramsyscall_printf("tty installed\n");   
+	leaveCriticalSection();  
+
+	PrintDevices();
+	syscall_putchar('\n');
+    ramsyscall_printf("tty installed\n");
+	while(1);  
+
+    syscall_putchar('D');
 	
-	while(1);
+	while(1)
+	{
+		syscall_putchar('Z');
+		//ramsyscall_printf("tty installed ad %d\n", ad); 
+	}
 }
