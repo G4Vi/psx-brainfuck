@@ -428,12 +428,7 @@ void interpret_program(const char *program, const char *input)
 #define SIO_PARITY_ODD	1	/*ODD/EVEN are set to vice-versa according to Martin's docs*/
 #define SIO_PARITY_EVEN	3
 
-/*Pointers to SIO registers*/
-volatile static unsigned char *SIO_TX_RX = (unsigned char*)0x1F801050;	/*Read/Write*/
-volatile static unsigned short *SIO_STAT = (unsigned short*)0x1F801054;	/*Read only*/
-volatile static unsigned short *SIO_MODE = (unsigned short*)0x1F801058;	/*Read/Write*/
-volatile static unsigned short *SIO_CTRL = (unsigned short*)0x1F80105A;	/*Read/Write*/
-volatile static unsigned short *SIO_BPSV = (unsigned short*)0x1F80105E;	/*Read/Write*/
+#include "common/hardware/sio1.h"
 
 /*
  * Initialize SIO communication at the specified bitrate.
@@ -448,23 +443,6 @@ void StartSIO(int bitrate);
  * and not simply passing 5 as an argument.
  */
 void StartSIOEx(int bitrate, int datalenght, int parity, int stopbit);
-
-/*
- * Shuts down SIO communication.
- */
-void StopSIO();
-
-/*
- * Read a single byte from the input buffer.
- * Direct access to register, doesn't use BIOS routines.
- */
-unsigned char ReadByteSIO();
-
-/*
- * Send a single byte to the output buffer.
- * Direct access to register, doesn't use BIOS routines.
- */
-void SendByteSIO(unsigned char data);
 
 /*
  * Check if any data is waiting in the input buffer.
@@ -489,49 +467,24 @@ void StartSIO(int bitrate)
 void StartSIOEx(int bitrate, int datalenght, int parity, int stopbit)
 {
 	/*Set SIO_MODE register, bitrate reload factor set to MUL16 by default*/
-	*SIO_MODE = SIO_REL_MUL16 | (datalenght << 2) | (parity << 4) | (stopbit << 6);
+	SIO1_MODE = SIO_REL_MUL16 | (datalenght << 2) | (parity << 4) | (stopbit << 6);
 
 	/*Reset SIO_CTRL register.*/
-	*SIO_CTRL = 0;
+	SIO1_CTRL = 0;
 
 	/*Set TX and RT to enabled, no handshaking signals.*/
-	*SIO_CTRL = 1 | (1 << 2);
+	SIO1_CTRL = 1 | (1 << 2);
 
 	/*Calculate bitrate reload value based on the given bitrate
 	 * Reload = SystemClock (33 Mhz) / (Factor (MULI16) * bitrate)*/
-	*SIO_BPSV = 0x204CC00 / (16 * bitrate);
-}
-
-void StopSIO()
-{
-	/*Set all SIO related registers to zero*/
-	*SIO_MODE = 0;
-	*SIO_CTRL = 0;
-	*SIO_BPSV = 0;
-}
-
-unsigned char ReadByteSIO()
-{
-	return *(unsigned char*)SIO_TX_RX;
-}
-
-void SendByteSIO(unsigned char data)
-{
-	*SIO_TX_RX = data;
+	SIO1_BAUD = 0x204CC00 / (16 * bitrate);
 }
 
 int CheckSIOInBuffer()
 {
 	/*Return status of RX FIFO*/
-	return (*SIO_STAT & 0x2)>>1;
+	return (SIO1_STAT & 0x2)>>1;
 }
-
-int CheckSIOOutBuffer()
-{
-	/*Return status of TX Ready flag*/
-	return (*SIO_STAT & 0x4)>>1;
-}
-
 
 static __attribute__((always_inline)) int syscall_write(int fd, const void *buffer, int size) {
     register int n asm("t1") = 0x35;
@@ -556,36 +509,34 @@ void PrintDevices(){
 #include "common/psxlibc/device.h"
 
 int KTTYAction(struct File * file, enum FileAction inMode)
-{
-    
-    if( inMode != PSXWRITE )
-	{
-		return -1;
-	}
-        
-    
+{    
     uint32_t transferLeft = file->count;
+	if( inMode != PSXWRITE )
+	{
+		uint8_t *writeAddr = file->buffer;
+		while(transferLeft > 0)
+		{
+			while((SIO1_STAT & 2) == 0) ;
+			*writeAddr = SIO1_DATA;			
+			SIO1_CTRL |= 0x10; // ack
+			--transferLeft;
+		    ++writeAddr;
+		}
+		return file->count;
+	}
+
     uint8_t *readAddr = file->buffer;
-	bool printA = false;
 	while(transferLeft > 0)
 	{
 		uint32_t bailout = 0;
         
         // SR_TXU | SR_TXRDY
-        while( (*SIO_STAT & 0x05) == 0 ){
-            if ( bailout++ > 8000 )
-                break;
+        while( (SIO1_STAT & 0x05) == 0 )
+		{
+            if ( bailout++ > 8000) break;
         }
 
-        if(!printA)
-		{
-			*SIO_TX_RX = *readAddr;
-		}
-		else
-		{
-			*SIO_TX_RX ='A';
-		}
-		printA = !printA;
+        SIO1_DATA = *readAddr;
 		--transferLeft;
 		++readAddr;
 	}
@@ -620,7 +571,7 @@ int KTTYformat(struct File *file)
 }
 
 const char devname[] = "tty";
-const char devdesc[] = "SIO_TTY";
+const char devdesc[] = "G4TTY";
 
 static struct Device newtty  = {
 	.name = (const char*)&devname,
@@ -653,64 +604,50 @@ int main(void) {
 	compile(NULL, NULL);
 	voidfunc memcall = (voidfunc)&MEMORY;
 	memcall();		
-	ramsyscall_printf("compiled ran\n");    
-   
-    /*char buf[] = "Got char X\r\n";
-	while(1)
-	{
-		if(CheckSIOInBuffer())
-		{
-			char c = ReadByteSIO();
-			//ramsyscall_printf("RECV char %c\n", c);
-			buf[sizeof(buf)-4] = c;
-			for(char *str = buf; *str != '\0'; ++str)
-			{
-				while(!CheckSIOOutBuffer());
-				SendByteSIO(*str);
-			}
-		}	
-	}*/
-
+	ramsyscall_printf("compiled ran\n");   
     
     PrintDevices();
+	ramsyscall_printf("newtty addr 0x%X\n", &newtty);
 	ramsyscall_printf("newtty strings 0x%X 0x%x\n", newtty.name, newtty.desc);
 
-
 	// replace the TTY
-	enterCriticalSection();	
+	const int wasCritical = enterCriticalSection();	
 
 	// close STDIN and STDOUT
     syscall_close(0);
 	syscall_close(1);
 
-	syscall_removeDevice(devname);
-    leaveCriticalSection();  
-
-	PrintDevices();
-	syscall_putchar('\n');
-
-    enterCriticalSection();
-    ramsyscall_printf("newtty addr 0x%X\n", &newtty);
+    // remove the old tty handler and install ours
+	syscall_removeDevice(devname);   
     int ad = syscall_addDevice(&newtty);
 
 	// reopen STDIN and STDOUT
 	syscall_open(devname, PSXREAD);
 	syscall_open(devname, PSXWRITE);
 
-	leaveCriticalSection();  
+	if(wasCritical) leaveCriticalSection();  
 
 	PrintDevices();
-	syscall_putchar('\n');
+	const char *ttyinstalled = "tty installed\n";
+    syscall_write(1, ttyinstalled, strlen(ttyinstalled));
 
-	syscall_write(1, "bye\n", 4);
-    ramsyscall_printf("tty installed\n");
-	while(1);  
+	ramsyscall_printf("I_MASK before 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);
 
-    syscall_putchar('D');
-	
+    *((volatile unsigned long*)0x1f801074) &= (0xFFFFFFFF ^ (1<<8));
+
+	ramsyscall_printf("I_MASK after 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);
 	while(1)
 	{
-		syscall_putchar('Z');
-		//ramsyscall_printf("tty installed ad %d\n", ad); 
+		char key;
+		syscall_read(0, &key, sizeof(key));
+		syscall_write(1, &key, sizeof(key));
+		if(key == '!')
+		{
+			syscall_write(1, "done", 4);
+			break;
+		}
 	}
+	*((volatile unsigned long*)0x1f801074) |= (1<<8);
+	ramsyscall_printf("I_MASK reenable 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);
+	while(1);   
 }
