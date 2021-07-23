@@ -643,11 +643,14 @@ int main(void) {
 		syscall_write(1, &key, sizeof(key));
 		if(key == '!')
 		{
-			syscall_write(1, "done", 4);
+			syscall_write(1, "done\n", 5);
 			break;
 		}
 	}
+	ramsyscall_printf("I_STAT SIO before 0x%X\n", (*(unsigned long*)0x1f801070) & (1<<8));
+	(*(volatile unsigned long*)0x1f801070) &= (0xFFFFFFFF ^ (1<<8));
+	ramsyscall_printf("I_STAT SIO after 0x%X\n", (*(unsigned long*)0x1f801070) & (1<<8));
 	*((volatile unsigned long*)0x1f801074) |= (1<<8);
-	ramsyscall_printf("I_MASK reenable 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);
+	ramsyscall_printf("I_MASK reenable 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);	
 	while(1);   
 }
