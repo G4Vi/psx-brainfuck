@@ -631,11 +631,14 @@ int main(void) {
 	const char *ttyinstalled = "tty installed\n";
     syscall_write(1, ttyinstalled, strlen(ttyinstalled));
 
-	ramsyscall_printf("I_MASK before 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);
+    volatile unsigned long *I_STAT = (volatile unsigned long*)0x1f801070;
+	volatile unsigned long *I_MASK = (volatile unsigned long*)0x1f801074;
 
-    *((volatile unsigned long*)0x1f801074) &= (0xFFFFFFFF ^ (1<<8));
+	ramsyscall_printf("I_MASK before 0x%X\n", (*I_MASK) & 0x03FF);
 
-	ramsyscall_printf("I_MASK after 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);
+    *I_MASK &= (0xFFFFFFFF ^ (1<<8));
+
+	ramsyscall_printf("I_MASK after 0x%X\n", (*I_MASK) & 0x03FF);
 	while(1)
 	{
 		char key;
@@ -647,10 +650,10 @@ int main(void) {
 			break;
 		}
 	}
-	ramsyscall_printf("I_STAT SIO before 0x%X\n", (*(unsigned long*)0x1f801070) & (1<<8));
-	(*(volatile unsigned long*)0x1f801070) &= (0xFFFFFFFF ^ (1<<8));
-	ramsyscall_printf("I_STAT SIO after 0x%X\n", (*(unsigned long*)0x1f801070) & (1<<8));
-	*((volatile unsigned long*)0x1f801074) |= (1<<8);
-	ramsyscall_printf("I_MASK reenable 0x%X\n", (*(unsigned long*)0x1f801074) & 0x03FF);	
+	ramsyscall_printf("I_STAT SIO before 0x%X\n", (*I_STAT) & (1<<8));
+	*I_STAT &= (0xFFFFFFFF ^ (1<<8));
+	ramsyscall_printf("I_STAT SIO after 0x%X\n", (*I_STAT) & (1<<8));
+	*I_MASK |= (1<<8);
+	ramsyscall_printf("I_MASK reenable 0x%X\n", (*I_MASK) & 0x03FF);	
 	while(1);   
 }
